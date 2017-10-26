@@ -180,6 +180,11 @@ markDone :: Ctxt -> Text -> Int -> IO ()
 markDone ctxt account id =
   withResource (db ctxt) $ \c -> void $ execute c "update todos set done_at = now() where id in (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (account, id)
 
+updateTodo :: Ctxt -> Text -> Int -> Text -> IO ()
+updateTodo ctxt account id txt =
+  withResource (db ctxt) $ \c -> void $ execute c "update todos set description = ? where id in (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (txt, account, id)
+
+
 redirectIndex :: Text -> IO (Maybe Response)
 redirectIndex account = redirect $ "/?acnt=" <> account
 
@@ -201,10 +206,16 @@ doneH ctxt account id = do
   markDone ctxt account id
   redirectIndex account
 
+updateH :: Ctxt -> Text -> Int -> Text -> IO (Maybe Response)
+updateH ctxt account id txt = do
+  updateTodo ctxt account id txt
+  redirectIndex account
+
 site :: Ctxt -> IO Response
 site ctxt = route ctxt [ path "static" ==> staticServe "static"
                        , param "acnt" // end ==> indexH
                        , param "acnt" // path "todos" // segment // path "done" ==> doneH
+                       , param "acnt" // path "todos" // segment // path "update" // param "txt" !=> updateH
                        , anything ==> larcenyServe
                        ] 
             `fallthrough` do r <- render ctxt "404"

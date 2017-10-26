@@ -13,12 +13,14 @@
       <todos>
         <bind tag="cls"><is-done>done</is-done></bind>
         <li class="${cls}">
-          <description/>
+          <is-done><description/></is-done>
           <not-done>
+            <span class="description" data-acnt="${account}" data-id="${id}"><description/></span>
             <a onclick="return confirm('Are you sure?');" href="/todos/${id}/done?acnt=${account}">&#10004;</a>
           </not-done>
-        </li>
+        </li> 
       </todos>
     </ul>
   </body>
+  <script type="text/javascript" src="/static/app.js"></script>
 </html>

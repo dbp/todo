@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-    <meta name="viewport" content="width=980, user-scalable=no">
+    <meta name="viewport" content="width=980, initial-scale=1.0, maximum-scale=1, minimum-scale=1">
     <link rel="stylesheet" href="/static/css/main.css"/>
   </head>
   <body>

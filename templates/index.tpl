@@ -28,6 +28,7 @@
             <deadline><timestamp/></deadline>
             <a onclick="return confirm('Are you sure?');" href="/todos/${id}/done?acnt=${account}">&#10004;</a>
           </not-done>
+          <div class="clearfix"></div>
         </li> 
       </todos>
     </ul>

@@ -16,6 +16,7 @@ import           Data.Text                          (Text)
 import qualified Data.Text                          as T
 import qualified Data.Text.Encoding                 as T
 import           Data.Time.Clock
+import Data.Time.Format
 import           Data.Traversable
 import           Database.PostgreSQL.Simple         (ConnectInfo (..),
                                                      Connection, Only (..),
@@ -108,7 +109,7 @@ larcenyServe ctxt = do
                      , anything ==> \ctxt -> render ctxt idx
                      ]
 
-data TodoData = TodoData Text
+data TodoData = TodoData Text Int
 
 data Todo = Todo { tId :: Int
                  , tDescription :: Text
@@ -147,6 +148,7 @@ instance FromRow Mode where
 
 todoForm :: Form Text IO TodoData
 todoForm = TodoData <$> "description" .: text Nothing
+                    <*> "when" .: stringRead "err" Nothing
 
 todoSubs :: Todo -> Substitutions
 todoSubs t = L.subs
@@ -154,6 +156,7 @@ todoSubs t = L.subs
   ,("description", L.textFill $ tDescription t)
   ,("is-done", if isJust (tDoneAt t) then L.fillChildren else L.textFill "")
   ,("not-done", if isNothing (tDoneAt t) then L.fillChildren else L.textFill "")
+  ,("deadline", if isNothing (tDeadlineAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ T.pack $ formatTime defaultTimeLocale "%F" (fromJust (tDeadlineAt t)))]))
   ]
 
 
@@ -164,9 +167,10 @@ getMode ctxt account mode =
                                       (x:_) -> return x :: IO Mode
                                       [] -> head <$> query c "insert into modes (name, account) values (?,?) returning id, name, account" (mode, account)
 
-newTodo :: Ctxt -> Mode -> Text -> IO (Maybe Todo)
-newTodo ctxt mode description =
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id) values (?,?) returning id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at" (description, mId mode)
+newTodo :: Ctxt -> Mode -> Text -> Int -> IO (Maybe Todo)
+newTodo ctxt mode description when = do
+  now <- getCurrentTime
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id, deadline_at) values (?,?, ?) returning id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at" (description, mId mode, if when == 0 then Nothing else Just $ addUTCTime (fromIntegral $ 60 * 60 * 24 * when) now)
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
@@ -193,8 +197,8 @@ indexH ctxt account = do
   defmode <- getMode ctxt account "default"
   runForm ctxt "todo" todoForm $ \td ->
     case td of
-      (_, Just (TodoData desc)) -> do newTodo ctxt defmode desc
-                                      redirectIndex account
+      (_, Just (TodoData desc when)) -> do newTodo ctxt defmode desc when
+                                           redirectIndex account
       (v, Nothing) -> do
         todos <- getTodos ctxt defmode
         dones <- getDones ctxt defmode 

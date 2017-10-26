@@ -16,3 +16,8 @@ function desc_click_listener(event) {
 document.querySelectorAll(".description").forEach(function(d) {
     d.addEventListener('click', desc_click_listener, false);
 });
+document.querySelectorAll(".create input[type=submit]").forEach(function(d) {
+    d.addEventListener('click', function() {
+        document.querySelector(".create .when").setAttribute("value", d.getAttribute("data-when"));
+    }, true);
+});

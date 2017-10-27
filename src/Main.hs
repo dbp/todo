@@ -17,6 +17,7 @@ import qualified Data.Text                          as T
 import qualified Data.Text.Encoding                 as T
 import           Data.Time.Clock
 import Data.Time.Format
+import Data.Time.LocalTime
 import           Data.Traversable
 import           Database.PostgreSQL.Simple         (ConnectInfo (..),
                                                      Connection, Only (..),
@@ -109,7 +110,7 @@ larcenyServe ctxt = do
                      , anything ==> \ctxt -> render ctxt idx
                      ]
 
-data TodoData = TodoData Text Int
+data TodoData = TodoData Text (Maybe UTCTime)
 
 data Todo = Todo { tId :: Int
                  , tDescription :: Text
@@ -146,9 +147,12 @@ instance FromRow Mode where
                  <*> field
                  <*> field
 
-todoForm :: Form Text IO TodoData
-todoForm = TodoData <$> "description" .: text Nothing
-                    <*> "when" .: stringRead "err" Nothing
+timezone :: TimeZone
+timezone = unsafePerformIO getCurrentTimeZone
+
+todoForm :: Maybe Todo -> Form Text IO TodoData
+todoForm mt = TodoData <$> "description" .: text (tDescription <$> mt)
+                       <*> "deadline_at" .: (fmap (\d -> UTCTime d 0) <$> (optionalDateFormlet "%F" (utctDay <$> (tDeadlineAt =<< mt))))
 
 todoSubs :: Todo -> Substitutions
 todoSubs t = L.subs
@@ -167,10 +171,9 @@ getMode ctxt account mode =
                                       (x:_) -> return x :: IO Mode
                                       [] -> head <$> query c "insert into modes (name, account) values (?,?) returning id, name, account" (mode, account)
 
-newTodo :: Ctxt -> Mode -> Text -> Int -> IO (Maybe Todo)
-newTodo ctxt mode description when = do
-  now <- getCurrentTime
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id, deadline_at) values (?,?, ?) returning id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at" (description, mId mode, if when == 0 then Nothing else Just $ addUTCTime (fromIntegral $ 60 * 60 * 24 * when) now)
+newTodo :: Ctxt -> Mode -> Text -> Maybe UTCTime -> IO (Maybe Todo)
+newTodo ctxt mode description deadline_at = do
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id, deadline_at) values (?,?, ?) returning id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at" (description, mId mode, deadline_at)
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
@@ -180,30 +183,53 @@ getDones :: Ctxt -> Mode -> IO [Todo]
 getDones ctxt mode =
   withResource (db ctxt) $ \c -> query c "select id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at from todos where mode_id = ? and done_at is not null order by deadline_at desc, created_at asc" (Only $ mId mode)
 
+getTodo :: Ctxt -> Text -> Int -> IO (Maybe Todo)
+getTodo ctxt account id =
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
+
 markDone :: Ctxt -> Text -> Int -> IO ()
 markDone ctxt account id =
   withResource (db ctxt) $ \c -> void $ execute c "update todos set done_at = now() where id in (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (account, id)
 
-updateTodo :: Ctxt -> Text -> Int -> Text -> IO ()
-updateTodo ctxt account id txt =
-  withResource (db ctxt) $ \c -> void $ execute c "update todos set description = ? where id in (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (txt, account, id)
+updateTodo :: Ctxt -> Todo -> IO ()
+updateTodo ctxt todo =
+  withResource (db ctxt) $ \c -> void $ execute c "update todos set description = ?, deadline_at = ? where id = ?" (tDescription todo, tDeadlineAt todo, tId todo)
 
 
 redirectIndex :: Text -> IO (Maybe Response)
 redirectIndex account = redirect $ "/?acnt=" <> account
 
+redirectEdit :: Text -> Todo -> IO (Maybe Response)
+redirectEdit account todo = redirect $ "/todos/" <> tshow (tId todo) <> "/edit?acnt=" <> account
+
 indexH :: Ctxt -> Text -> IO (Maybe Response)
 indexH ctxt account = do
   defmode <- getMode ctxt account "default"
-  runForm ctxt "todo" todoForm $ \td ->
+  runForm ctxt "todo" (todoForm Nothing) $ \td ->
     case td of
-      (_, Just (TodoData desc when)) -> do newTodo ctxt defmode desc when
-                                           redirectIndex account
+      (_, Just (TodoData desc deadline)) -> do mt <- newTodo ctxt defmode desc deadline
+                                               case mt of
+                                                 Nothing -> redirectIndex account
+                                                 Just todo -> redirectEdit account todo
       (v, Nothing) -> do
         todos <- getTodos ctxt defmode
-        dones <- getDones ctxt defmode 
+        dones <- getDones ctxt defmode
         renderWith ctxt (formFills v <> L.subs [("todos", L.mapSubs todoSubs $ todos <> dones)
                                                ,("account", L.textFill account)]) "index"
+
+editH :: Ctxt -> Text -> Int -> IO (Maybe Response)
+editH ctxt account id = do
+  mtodo <- getTodo ctxt account id
+  case mtodo of
+    Nothing -> return Nothing
+    Just todo ->
+      runForm ctxt "todo" (todoForm $ Just todo) $ \td ->
+        case td of
+          (_, Just (TodoData desc deadline)) -> do updateTodo ctxt (todo { tDescription = desc, tDeadlineAt = deadline})
+                                                   redirectIndex account
+          (v, Nothing) -> do
+            renderWith ctxt (formFills v <> L.subs [("todo", L.fillChildrenWith $ todoSubs todo)
+                                                   ,("account", L.textFill account)]) "edit"
 
 doneH :: Ctxt -> Text -> Int -> IO (Maybe Response)
 doneH ctxt account id = do
@@ -212,13 +238,18 @@ doneH ctxt account id = do
 
 updateH :: Ctxt -> Text -> Int -> Text -> IO (Maybe Response)
 updateH ctxt account id txt = do
-  updateTodo ctxt account id txt
-  redirectIndex account
+  mtodo <- getTodo ctxt account id
+  case mtodo of
+    Nothing -> return Nothing
+    Just todo -> do
+      updateTodo ctxt (todo { tDescription = txt})
+      redirectIndex account
 
 site :: Ctxt -> IO Response
 site ctxt = route ctxt [ path "static" ==> staticServe "static"
                        , param "acnt" // end ==> indexH
                        , param "acnt" // path "todos" // segment // path "done" ==> doneH
+                       , param "acnt" // path "todos" // segment // path "edit" ==> editH
                        , param "acnt" // path "todos" // segment // path "update" // param "txt" !=> updateH
                        , anything ==> larcenyServe
                        ] 

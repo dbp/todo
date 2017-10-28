@@ -6,6 +6,8 @@
     <link rel="stylesheet" href="/static/css/main.css"/>
     <link rel="stylesheet" href="/static/css/pickadate.css"/>
     <link rel="stylesheet" href="/static/css/pickadate.date.css"/>
+    <link rel="apple-touch-icon" href="/static/icon.png">
+    <link rel="icon" type="image/png" href="/static/icon.png">
   </head>
   <body>
 

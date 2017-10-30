@@ -5,7 +5,11 @@
   <dfForm method="POST">
     <dfChildErrorList ref=""/>
     <dfInputTextArea ref="description"/>
-    Deadline: <dfInput class="date" ref="deadline_at"/>
+    Deadline:
+    <dfSubView ref="deadline_at">
+      <dfInput class="date" ref="date"/>
+      <dfInput class="time" ref="time"/>
+    </dfSubView>
     <br/>
     <dfInputSubmit value="Update"/>
   </dfForm>

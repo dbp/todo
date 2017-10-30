@@ -176,7 +176,7 @@ timezone = unsafePerformIO getCurrentTimeZone
 
 todoForm :: Maybe Todo -> Form Text IO TodoData
 todoForm mt = TodoData <$> "description" .: text (tDescription <$> mt)
-                       <*> "deadline_at" .: (fmap (\d -> UTCTime d 0) <$> (optionalDateFormlet "%F" (utctDay <$> (tDeadlineAt =<< mt))))
+                       <*> "deadline_at" .: optionalUtcTimeFormlet "%F" "%I:%M %p" timezone (tDeadlineAt =<< mt)
 
 todoSubs :: Todo -> Substitutions
 todoSubs t = L.subs
@@ -339,7 +339,7 @@ notifyTodo :: Ctxt -> Todo -> IO ()
 notifyTodo ctxt todo = do
   case tDeadlineAt todo of
     Nothing -> return ()
-    Just deadline -> do 
+    Just deadline -> do
       lastNotification <- listToMaybe <$> getNotifications ctxt todo
       let lastSent = fromMaybe (tCreatedAt todo) (nCreatedAt <$> lastNotification)
       now <- getCurrentTime

@@ -2,7 +2,10 @@
 
   <dfForm class="create" method="POST">
     <dfInputTextArea ref="description" placeholder="Write something here..."/>
-    <dfInputHidden ref="deadline_at"/>
+    <dfSubView ref="deadline_at">
+      <dfInputHidden ref="date"/>
+      <dfInputHidden ref="time"/>
+    </dfSubView>
     <button type="submit">+</button>
   </dfForm>
 

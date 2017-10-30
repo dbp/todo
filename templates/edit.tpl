@@ -7,12 +7,12 @@
     <dfInputTextArea ref="description"/>
     by
     <dfSubView ref="deadline_at">
-      <dfLabel ref="date">date:
-        <dfInput class="date" ref="date"/>
-      </dfLabel>
-      <dfLabel ref="time">time:
-        <dfInput class="time" ref="time"/>
-      </dfLabel>
+      date:
+      <dfInput class="dateform" ref="date"/>
+        
+      time:
+      <dfInput class="timeform" ref="time"/>
+      
     </dfSubView>
     <br/>
     <dfInputSubmit value="Update"/>

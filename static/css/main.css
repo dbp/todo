@@ -48,8 +48,8 @@ input {
     margin: 5px;
 }
 
-input.date {
-    width: auto;
+input.date, input.time {
+    width: 25%;
 }
 
 form.create {

@@ -257,6 +257,9 @@ updateH ctxt account id txt = do
 
 site :: Ctxt -> IO Response
 site ctxt = route ctxt [ path "static" ==> staticServe "static"
+                       -- cache busting version
+                       , path "static" // segment ==> \c (_ :: Text) ->
+                           staticServe "static" c
                        , param "acnt" // end ==> indexH
                        , param "acnt" // path "todos" // segment // path "done" ==> doneH
                        , param "acnt" // path "todos" // segment // path "undone" ==> undoneH

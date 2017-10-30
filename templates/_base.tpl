@@ -44,7 +44,7 @@
   <script type="text/javascript"  src="/static/js/picker.date.js"></script>
   <script type="text/javascript"  src="/static/js/picker.time.js"></script>
 
-  <script type="text/javascript" src="/static/0/app.js"></script>
+  <script type="text/javascript" src="/static/1/app.js"></script>
 </html>
 
 

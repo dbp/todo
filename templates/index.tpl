@@ -22,7 +22,7 @@
         <not-done>
           <a class="button" href="/todos/${id}/done?acnt=${account}">&#10004;</a>
           <a class="description" href="/todos/${id}/edit?acnt=${account}"><description/></a>
-          <deadline><timestamp/></deadline>
+          <deadline><span class="deadline"><timestamp/></span></deadline>
         </not-done>
         <div class="clearfix"></div>
       </li>

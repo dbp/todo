@@ -184,7 +184,7 @@ todoSubs t = L.subs
   ,("description", L.textFill $ tDescription t)
   ,("is-done", if isJust (tDoneAt t) then L.fillChildren else L.textFill "")
   ,("not-done", if isNothing (tDoneAt t) then L.fillChildren else L.textFill "")
-  ,("deadline", if isNothing (tDeadlineAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ T.pack $ formatTime defaultTimeLocale "%F" (fromJust (tDeadlineAt t)))]))
+  ,("deadline", if isNothing (tDeadlineAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ T.pack $ formatTime defaultTimeLocale "%F %I:%M%P" (fromJust (tDeadlineAt t)))]))
   ]
 
 

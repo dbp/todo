@@ -347,6 +347,6 @@ notifyTodo ctxt todo = do
         diffUTCTime now lastSent > 3600 -- never send more frequently than once per hour
         then do
           log' $ "Notification for todo ID " <> tshow (tId todo) <> " \"" <> tDescription todo <> "\""
-          notify ctxt (Push.message [Push.text (tDescription todo), Push.text "\n", Push.link (siteurl ctxt <> "/todos/" <> (tshow (tId todo)) <> "/done?mode_id=" <> (tshow (tModeId todo))) [Push.text "Mark Done"]])
+          notify ctxt (Push.message [Push.text (tDescription todo), Push.text $ "\n by " <> (T.pack $ formatTime defaultTimeLocale "%F %I:%M%P" deadline) <> "\n", Push.link (siteurl ctxt <> "/todos/" <> (tshow (tId todo)) <> "/done?mode_id=" <> (tshow (tModeId todo))) [Push.text "Mark Done"]])
           newNotification ctxt lastSent todo
         else return ()

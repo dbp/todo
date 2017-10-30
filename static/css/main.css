@@ -1,3 +1,9 @@
+/*
+main yellow: #FFD200;
+accent yellow: #FFB400
+black: #343434
+*/
+
 .done {
     background-color: #efefef;
     color: #ccc;
@@ -10,42 +16,98 @@
 body {
     margin: 0;
     padding: 5px;
+    color: #343434;
+    font-family: sans;
 }
 
+a {
+    text-decoration: none;
+    color: #343434;
+}
+
+form {
+    margin: 0 5px;
+    padding: 3px;
+    background-color: #FFD200;
+}
+
+
 textarea {
-    width: 100%;
-    margin: 2px;
+    width: 95%;
+    margin: 5px;
+    background-color: #FFD200;
+    border: 1px solid #343434;
+    font-family: sans;
+    color: #343434;
+}
+
+input {
+    width: 95%;
+    margin: 5px;
+}
+
+input.date {
+    width: auto;
+}
+
+form.create {
+    padding: 0;
+}
+
+.create textarea {
+    width: 89%;
+    margin: 0;
+    padding: 5px;
+    height: 40px;
+    display: inline-block;
+    vertical-align: top;
+    border: 0;
+}
+
+.create input[type=submit] {
+    width: 9%;
+    height: 40px;
+    margin: 0;
+    padding: 0;
+    display: inline-block;
+    vertical-align: top;
+    background-color: #FFB400;
+    border: 0;
+    float: right;
+    font-size: 2em;
 }
 
 ul {
     list-style-type: none;
     padding: 0;
+    margin: 0;
 }
-    clear: both;
 
-li {
+.todos li {
     padding: 3px;
     margin: 5px;
+    background-color: #FFD200;
+    position: relative;
 }
 
-    clear: both;
-    clear: both;
-    clear: both;
-    clear: both;
-    clear: both;
-li:nth-child(even) {
-    background-color: #ececec;
-    clear: both;
+.todos li.done {
+    background-color: #efefef;
 }
-    clear: both;
-    clear: both;
 
-li a {
-    float: right;
-    text-decoration: none;
+a.button {
     display: inline-block;
-    color: white;
-    background-color: #900;
-    padding: 0 2px;
-    border-radius: 3px;
+    background-color: #FFB400;
+    color: #343434;
+    margin: -3px;
+    padding: 5px;
+}
+
+.done a.button {
+    background-color: #ccc;
+}
+
+
+.close {
+    font-size: 4em;
+    line-height: 0.6em;
 }

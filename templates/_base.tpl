@@ -4,7 +4,7 @@
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, minimum-scale=1">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <link rel="stylesheet" href="/static/1/css/main.css"/>
+    <link rel="stylesheet" href="/static/2/css/main.css"/>
     <link rel="stylesheet" href="/static/css/pickadate.css"/>
     <link rel="stylesheet" href="/static/css/pickadate.date.css"/>
     <link rel="icon" type="image/png" href="/static/icon.png">

@@ -3,7 +3,7 @@
   <dfForm class="create" method="POST">
     <dfInputTextArea ref="description" placeholder="Write something here..."/>
     <dfInputHidden ref="deadline_at"/>
-    <dfInputSubmit value="+"/>
+    <button type="submit">+</button>
   </dfForm>
 
   <ul class="todos">
@@ -12,11 +12,13 @@
       <li class="${cls}">
         <is-done>
           <a class="button" href="/todos/${id}/undone?acnt=${account}">&#10008;</a>
-          <description/>
+          <span class="description">
+            <description/>
+          </span>
         </is-done>
         <not-done>
           <a class="button" href="/todos/${id}/done?acnt=${account}">&#10004;</a>
-          <a href="/todos/${id}/edit?acnt=${account}"><description/></a>
+          <a class="description" href="/todos/${id}/edit?acnt=${account}"><description/></a>
           <deadline><timestamp/></deadline>
         </not-done>
         <div class="clearfix"></div>

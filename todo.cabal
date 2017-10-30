@@ -38,6 +38,8 @@ executable todo
                      , heroku
                      , time
                      , wai-middleware-rollbar
+                     , dotenv
+                     , pushover
   default-language:    Haskell2010
 
 test-suite todo-test

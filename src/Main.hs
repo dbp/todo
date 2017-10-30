@@ -4,6 +4,7 @@
 
 module Main where
 
+import Control.Concurrent (forkIO, threadDelay)
 import Data.List (sort)
 import           Control.Monad
 import qualified Data.Map                           as M
@@ -28,8 +29,7 @@ import           GHC.IO.Encoding                    (setLocaleEncoding, utf8)
 import           Network.Wai                        (Response, pathInfo)
 import           Network.Wai.Handler.Warp           (run)
 import           Network.Wai.Middleware.Rollbar
-import           System.Environment                 (lookupEnv)
-import           System.Environment                 (lookupEnv)
+import           System.Environment                 (lookupEnv, getEnv)
 import           System.IO.Unsafe                   (unsafePerformIO)
 import           Text.Digestive.Form
 import           Text.Digestive.Larceny
@@ -39,11 +39,15 @@ import           Web.Heroku                         (parseDatabaseUrl)
 import qualified Web.Larceny                        as L
 import Control.Logging
 import System.Directory (listDirectory)
+import Configuration.Dotenv
+import qualified Network.Pushover as Push
 
 
-data Ctxt = Ctxt { _req    :: FnRequest
-                 , db      :: Pool Connection
-                 , library :: Library
+data Ctxt = Ctxt { _req     :: FnRequest
+                 , db       :: Pool Connection
+                 , library  :: Library
+                 , pushover :: (Push.APIToken, Push.UserKey)
+                 , siteurl :: Text
                  }
 
 instance RequestContext Ctxt where
@@ -60,10 +64,16 @@ renderWith ctxt subs tpl =
        Nothing -> return Nothing
        Just t' -> okHtml t'
 
+notify :: Ctxt -> Push.Message -> IO ()
+notify ctxt msg =
+  void $ Push.sendMessage (fst (pushover ctxt)) (snd (pushover ctxt)) msg
+
+
 
 initializer :: IO Ctxt
 initializer =
-  do lib <- L.loadTemplates "templates" L.defaultOverrides
+  do onMissingFile (loadFile False ".env") (return ())
+     lib <- L.loadTemplates "templates" L.defaultOverrides
      u <- fmap parseDatabaseUrl <$> lookupEnv "DATABASE_URL"
      let ps = fromMaybe [("host", "localhost")
                         ,("port", "5432")
@@ -85,18 +95,22 @@ initializer =
                             return ()
                          else return ())
            ms
-     return (Ctxt defaultFnRequest pgpool lib)
+     Right apik <- Push.makeToken . T.pack <$> getEnv "PUSHOVER_API"
+     Right userk <- Push.makeToken . T.pack <$> getEnv "PUSHOVER_USER"
+     url <- T.pack <$> fromMaybe "http://localhost:3000" <$> lookupEnv "SITE_URL"
+     return (Ctxt defaultFnRequest pgpool lib (apik, userk) url)
 
 main :: IO ()
-main = do
+main = withStderrLogging $ do
   setLocaleEncoding utf8
   ctxt <- initializer
   port <- maybe 3000 read <$> lookupEnv "PORT"
-  putStrLn $ "Listening on port " <> show port <>  "..."
+  log' $ "Listening on port " <> tshow port <>  "..."
   rb_token <- lookupEnv "ROLLBAR_ACCESS_TOKEN"
   let rb = case rb_token of
              Nothing -> id
              Just tok -> exceptions (Settings (fromString tok) "production" :: Settings '[])
+  forkIO $ notifyThread ctxt
   run port $ rb $ toWAI ctxt site
 
 larcenyServe :: Ctxt -> IO (Maybe Response)
@@ -147,6 +161,16 @@ instance FromRow Mode where
                  <*> field
                  <*> field
 
+data Notification = Notification { nId :: Int
+                                 , nTodoId :: Int
+                                 , nCreatedAt :: UTCTime
+                                 }
+
+instance FromRow Notification where
+  fromRow = Notification <$> field
+                         <*> field
+                         <*> field
+
 timezone :: TimeZone
 timezone = unsafePerformIO getCurrentTimeZone
 
@@ -164,8 +188,17 @@ todoSubs t = L.subs
   ]
 
 
-getMode :: Ctxt -> Text -> Text -> IO Mode
-getMode ctxt account mode =
+getModes :: Ctxt -> IO [Mode]
+getModes ctxt =
+  withResource (db ctxt) $ \c -> query_ c "select id, name, account from modes"
+
+getMode :: Ctxt -> Int -> IO (Maybe Mode)
+getMode ctxt id =
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select id, name, account from modes where id = ?" (Only id)
+
+
+getOrCreateMode :: Ctxt -> Text -> Text -> IO Mode
+getOrCreateMode ctxt account mode =
   withResource (db ctxt) $ \c -> do res <- query c "select id, name, account from modes where name = ? and account = ?" (mode, account)
                                     case res of
                                       (x:_) -> return x :: IO Mode
@@ -186,6 +219,14 @@ getDones ctxt mode =
 getTodo :: Ctxt -> Text -> Int -> IO (Maybe Todo)
 getTodo ctxt account id =
   withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
+
+getNotifications :: Ctxt -> Todo -> IO [Notification]
+getNotifications ctxt todo =
+  withResource (db ctxt) $ \c -> query c "select id, todo_id, created_at from notifications where todo_id = ? order by created_at desc" (Only $ tId todo)
+
+newNotification :: Ctxt -> UTCTime -> Todo -> IO ()
+newNotification ctxt lastsent todo =
+  withResource (db ctxt) $ \c -> void $ execute c "insert into notifications (todo_id, created_at) (select ?, now() where not exists (select id from notifications where created_at > ? and todo_id = ?))" (tId todo, lastsent, tId todo)
 
 markDone :: Ctxt -> Text -> Int -> IO ()
 markDone ctxt account id =
@@ -208,7 +249,7 @@ redirectEdit account todo = redirect $ "/todos/" <> tshow (tId todo) <> "/edit?a
 
 indexH :: Ctxt -> Text -> IO (Maybe Response)
 indexH ctxt account = do
-  defmode <- getMode ctxt account "default"
+  defmode <- getOrCreateMode ctxt account "default"
   runForm ctxt "todo" (todoForm Nothing) $ \td ->
     case td of
       (_, Just (TodoData desc deadline)) -> do mt <- newTodo ctxt defmode desc deadline
@@ -255,19 +296,57 @@ updateH ctxt account id txt = do
       updateTodo ctxt (todo { tDescription = txt})
       redirectIndex account
 
+authed :: Ctxt -> Text -> IO (Maybe Response)
+authed ctxt account =
+  route ctxt [ end ==> flip indexH account
+             , path "todos" // segment // path "done" ==> flip doneH account
+             , path "todos" // segment // path "undone" ==> flip undoneH account
+             , path "todos" // segment // path "edit" ==> flip editH account
+             , path "todos" // segment // path "update" // param "txt" !=> flip updateH account]
+
+withAccount :: Ctxt -> Text -> IO (Maybe Response)
+withAccount = authed
+
+withMode :: Ctxt -> Int -> IO (Maybe Response)
+withMode ctxt id = do m <- getMode ctxt id
+                      case m of
+                        Nothing -> return Nothing
+                        Just mode -> authed ctxt (mAccount mode)
+
 site :: Ctxt -> IO Response
 site ctxt = route ctxt [ path "static" ==> staticServe "static"
                        -- cache busting version
                        , path "static" // segment ==> \c (_ :: Text) ->
                            staticServe "static" c
-                       , param "acnt" // end ==> indexH
-                       , param "acnt" // path "todos" // segment // path "done" ==> doneH
-                       , param "acnt" // path "todos" // segment // path "undone" ==> undoneH
-                       , param "acnt" // path "todos" // segment // path "edit" ==> editH
-                       , param "acnt" // path "todos" // segment // path "update" // param "txt" !=> updateH
-                       , anything ==> larcenyServe
-                       ] 
+                       , param "acnt" ==> withAccount 
+                       , param "mode_id" ==> withMode
+                       ]
             `fallthrough` do r <- render ctxt "404"
                              case r of
                                Just r' -> return r'
                                Nothing -> notFoundText "Page not found"
+
+notifyThread :: Ctxt -> IO ()
+notifyThread ctxt = do
+  modes <- getModes ctxt
+  mapM_ (\mode -> do
+            todos <- getTodos ctxt mode
+            mapM_ (notifyTodo ctxt) todos) modes
+  threadDelay 300000000 -- 5 minutes
+  notifyThread ctxt
+
+notifyTodo :: Ctxt -> Todo -> IO ()
+notifyTodo ctxt todo = do
+  case tDeadlineAt todo of
+    Nothing -> return ()
+    Just deadline -> do 
+      lastNotification <- listToMaybe <$> getNotifications ctxt todo
+      let lastSent = fromMaybe (tCreatedAt todo) (nCreatedAt <$> lastNotification)
+      now <- getCurrentTime
+      if diffUTCTime now lastSent > diffUTCTime deadline now &&
+        diffUTCTime now lastSent > 3600 -- never send more frequently than once per hour
+        then do
+          log' $ "Notification for todo ID " <> tshow (tId todo) <> " \"" <> tDescription todo <> "\""
+          notify ctxt (Push.message [Push.text (tDescription todo), Push.text "\n", Push.link (siteurl ctxt <> "/todos/" <> (tshow (tId todo)) <> "/done?mode_id=" <> (tshow (tModeId todo))) [Push.text "Mark Done"]])
+          newNotification ctxt lastSent todo
+        else return ()

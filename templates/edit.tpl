@@ -8,10 +8,10 @@
     by
     <dfSubView ref="deadline_at">
       date:
-      <dfInput class="dateform" ref="date"/>
+      <dfInput class="date" ref="date"/>
         
       time:
-      <dfInput class="timeform" ref="time"/>
+      <dfInput class="time" ref="time"/>
       
     </dfSubView>
     <br/>

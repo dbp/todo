@@ -46,7 +46,7 @@ import qualified Network.Pushover as Push
 data Ctxt = Ctxt { _req     :: FnRequest
                  , db       :: Pool Connection
                  , library  :: Library
-                 , pushover :: (Push.APIToken, Push.UserKey)
+                 , pushover :: Maybe (Push.APIToken, Push.UserKey)
                  , siteurl :: Text
                  }
 
@@ -66,9 +66,10 @@ renderWith ctxt subs tpl =
 
 notify :: Ctxt -> Push.Message -> IO ()
 notify ctxt msg =
-  void $ Push.sendMessage (fst (pushover ctxt)) (snd (pushover ctxt)) msg
-
-
+  case pushover ctxt of
+    Nothing -> return ()
+    Just (apik, userk) -> 
+      void $ Push.sendMessage apik userk msg
 
 initializer :: IO Ctxt
 initializer =
@@ -95,10 +96,16 @@ initializer =
                             return ()
                          else return ())
            ms
-     Right apik <- Push.makeToken . T.pack <$> getEnv "PUSHOVER_API"
-     Right userk <- Push.makeToken . T.pack <$> getEnv "PUSHOVER_USER"
+     push <- do mapi <- lookupEnv "PUSHOVER_API"
+                muser <- lookupEnv "PUSHOVER_USER"
+                case (mapi,muser) of
+                  (Just api, Just user) ->
+                    let (Right apik) = Push.makeToken (T.pack api) in
+                      let (Right userk) = Push.makeToken (T.pack user) in
+                        return $ Just (apik, userk)
+                  _ -> return Nothing
      url <- T.pack <$> fromMaybe "http://localhost:3000" <$> lookupEnv "SITE_URL"
-     return (Ctxt defaultFnRequest pgpool lib (apik, userk) url)
+     return (Ctxt defaultFnRequest pgpool lib push url)
 
 main :: IO ()
 main = withStderrLogging $ do
@@ -258,9 +265,17 @@ indexH ctxt account = do
                                                  Just todo -> redirectEdit account todo
       (v, Nothing) -> do
         todos <- getTodos ctxt defmode
-        dones <- getDones ctxt defmode
-        renderWith ctxt (formFills v <> L.subs [("todos", L.mapSubs todoSubs $ todos <> dones)
-                                               ,("account", L.textFill account)]) "index"
+        renderWith ctxt (formFills v <> L.subs [("todos", L.mapSubs todoSubs todos)
+                                               ,("account", L.textFill account)])
+          "index"
+
+archiveH :: Ctxt -> Text -> IO (Maybe Response)
+archiveH ctxt account = do
+  defmode <- getOrCreateMode ctxt account "default"
+  dones <- getDones ctxt defmode
+  renderWith ctxt (L.subs [("todos", L.mapSubs todoSubs dones)
+                          ,("account", L.textFill account)])
+    "archive"
 
 editH :: Ctxt -> Text -> Int -> IO (Maybe Response)
 editH ctxt account id = do
@@ -299,6 +314,7 @@ updateH ctxt account id txt = do
 authed :: Ctxt -> Text -> IO (Maybe Response)
 authed ctxt account =
   route ctxt [ end ==> flip indexH account
+             , path "archive" ==> flip archiveH account
              , path "todos" // segment // path "done" ==> flip doneH account
              , path "todos" // segment // path "undone" ==> flip undoneH account
              , path "todos" // segment // path "edit" ==> flip editH account

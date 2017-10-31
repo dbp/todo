@@ -13,19 +13,13 @@
     <todos>
       <bind tag="cls"><is-done>done</is-done></bind>
       <li class="${cls}">
-        <is-done>
-          <a class="button" href="/todos/${id}/undone?acnt=${account}">&#10008;</a>
-          <span class="description">
-            <description/>
-          </span>
-        </is-done>
-        <not-done>
-          <a class="button" href="/todos/${id}/done?acnt=${account}">&#10004;</a>
-          <a class="description" href="/todos/${id}/edit?acnt=${account}"><description/></a>
-          <deadline><span class="deadline"><timestamp/></span></deadline>
-        </not-done>
+        <a class="button" href="/todos/${id}/done?acnt=${account}">&#10004;</a>
+        <a class="description" href="/todos/${id}/edit?acnt=${account}"><description/></a>
+        <deadline><span class="deadline"><timestamp/></span></deadline>
         <div class="clearfix"></div>
       </li>
     </todos>
   </ul>
+
+  <a class="done" href="/archive?acnt=${account}">View Archive</a>
 </apply>

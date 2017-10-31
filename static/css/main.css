@@ -9,6 +9,13 @@ black: #343434
     color: #ccc;
 }
 
+a.done {
+    text-align: center;
+    display: block;
+    padding: 3px;
+    margin: 5px
+}
+
 .clearfix {
     clear: both;
 }

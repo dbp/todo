@@ -221,7 +221,7 @@ getTodos ctxt mode =
 
 getDones :: Ctxt -> Mode -> IO [Todo]
 getDones ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at from todos where mode_id = ? and done_at is not null order by deadline_at desc, created_at asc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at from todos where mode_id = ? and done_at is not null order by done_at desc" (Only $ mId mode)
 
 getTodo :: Ctxt -> Text -> Int -> IO (Maybe Todo)
 getTodo ctxt account id =

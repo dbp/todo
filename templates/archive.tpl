@@ -10,6 +10,7 @@
         <span class="description">
           <description/>
         </span>
+        <done_at><span class="deadline">done at <timestamp/></span></done_at>
       </li>
     </todos>
   </ul>

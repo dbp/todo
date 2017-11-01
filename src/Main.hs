@@ -221,7 +221,7 @@ newTodo ctxt mode description deadline_at = do
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null order by deadline_at desc, created_at asc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
 
 getDones :: Ctxt -> Mode -> IO [Todo]
 getDones ctxt mode =
@@ -247,8 +247,8 @@ markDone ctxt account id = do
     Just todo -> do
       withResource (db ctxt) $ \c -> void $ execute c "insert into dones (todo_id) (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (account, id)
       case (tDeadlineAt todo, tRepeatAt todo) of
-        (Just dead, Just repeat) -> 
-          updateTodo ctxt (todo { tDeadlineAt = Just $ addUTCTime (fromIntegral $ repeat * 60 * 60 * 24) dead })
+        (Just dead, Just repeat) ->
+          updateTodo ctxt (todo { tDeadlineAt = Just $ addUTCTime (fromIntegral $ repeat * 60 * 60 * 24) dead, tSnoozeTill = Just dead })
         _ -> return ()
 
 markUndone :: Ctxt -> Text -> Int -> IO ()
@@ -257,7 +257,7 @@ markUndone ctxt account id =
 
 updateTodo :: Ctxt -> Todo -> IO ()
 updateTodo ctxt todo =
-  withResource (db ctxt) $ \c -> void $ execute c "update todos set description = ?, deadline_at = ? where id = ?" (tDescription todo, tDeadlineAt todo, tId todo)
+  withResource (db ctxt) $ \c -> void $ execute c "update todos set description = ?, deadline_at = ?, snooze_till = ? where id = ?" (tDescription todo, tDeadlineAt todo, tSnoozeTill todo, tId todo)
 
 
 redirectIndex :: Text -> IO (Maybe Response)

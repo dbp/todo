@@ -369,7 +369,11 @@ notifyTodo ctxt todo = do
     Nothing -> return ()
     Just deadline -> do
       lastNotification <- listToMaybe <$> getNotifications ctxt todo
-      let lastSent = fromMaybe (tCreatedAt todo) (nCreatedAt <$> lastNotification)
+      let lastSent = case (nCreatedAt <$> lastNotification) of
+                       Nothing -> tCreatedAt todo
+                       Just not -> case tSnoozeTill todo of
+                                     Nothing -> not
+                                     Just snooze -> max snooze not
       now <- getCurrentTime
       if diffUTCTime now lastSent > diffUTCTime deadline now &&
         diffUTCTime now lastSent > 3600 -- never send more frequently than once per hour

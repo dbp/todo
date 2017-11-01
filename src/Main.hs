@@ -213,19 +213,19 @@ getOrCreateMode ctxt account mode =
 
 newTodo :: Ctxt -> Mode -> Text -> Maybe UTCTime -> IO (Maybe Todo)
 newTodo ctxt mode description deadline_at = do
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id, deadline_at) values (?,?, ?) returning id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at" (description, mId mode, deadline_at)
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id, deadline_at) values (?,?, ?) returning id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, NULL as done_at" (description, mId mode, deadline_at)
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at from todos where mode_id = ? and done_at is null order by deadline_at desc, created_at asc" (Only $ mId mode)
-
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select max(id) as id, max(created_at) as created_at, todo_id from dones group by todo_id) AS D on D.todo_id = T.id where mode_id = ? and D.created_at is null order by deadline_at desc, created_at asc" (Only $ mId mode)
+  
 getDones :: Ctxt -> Mode -> IO [Todo]
 getDones ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at from todos where mode_id = ? and done_at is not null order by done_at desc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select max(id) as id, max(created_at) as created_at, todo_id from dones group by todo_id) AS D on D.todo_id = T.id where mode_id = ? and D.created_at is not null order by D.created_at desc" (Only $ mId mode)
 
 getTodo :: Ctxt -> Text -> Int -> IO (Maybe Todo)
 getTodo ctxt account id =
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, done_at from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select max(id) as id, max(created_at) as created_at, todo_id from dones group by todo_id) AS D on D.todo_id = T.id join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
 
 getNotifications :: Ctxt -> Todo -> IO [Notification]
 getNotifications ctxt todo =
@@ -237,11 +237,11 @@ newNotification ctxt lastsent todo =
 
 markDone :: Ctxt -> Text -> Int -> IO ()
 markDone ctxt account id =
-  withResource (db ctxt) $ \c -> void $ execute c "update todos set done_at = now() where id in (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (account, id)
+  withResource (db ctxt) $ \c -> void $ execute c "insert into dones (todo_id) (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (account, id)
 
 markUndone :: Ctxt -> Text -> Int -> IO ()
 markUndone ctxt account id =
-  withResource (db ctxt) $ \c -> void $ execute c "update todos set done_at = NULL where id in (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (account, id)
+  withResource (db ctxt) $ \c -> void $ execute c "delete from dones where id in (select id from dones where todo_id = ? order by created_at desc limit 1)" (account, id)
 
 updateTodo :: Ctxt -> Todo -> IO ()
 updateTodo ctxt todo =

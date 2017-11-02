@@ -6,6 +6,7 @@
       <dfInputHidden ref="date"/>
       <dfInputHidden ref="time"/>
     </dfSubView>
+    <dfInputHidden ref="repeat_at"/>
     <button type="submit">+</button>
   </dfForm>
 
@@ -15,7 +16,7 @@
       <li class="${cls}">
         <a class="button" href="/todos/${id}/done?acnt=${account}">&#10004;</a>
         <a class="description" href="/todos/${id}/edit?acnt=${account}"><description/></a>
-        <deadline><span class="deadline"><timestamp/></span></deadline>
+        <deadline><span class="deadline"><timestamp/><repeat_at> then every <interval/></repeat></span></deadline>
         <div class="clearfix"></div>
       </li>
     </todos>

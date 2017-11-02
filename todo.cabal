@@ -40,6 +40,7 @@ executable todo
                      , wai-middleware-rollbar
                      , dotenv
                      , pushover
+                     , parsec
   default-language:    Haskell2010
 
 test-suite todo-test

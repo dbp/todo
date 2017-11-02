@@ -15,6 +15,8 @@
       
     </dfSubView>
     <br/>
+    repeat: <dfInput ref="repeat_at"/>
+    <br/>
     <dfInputSubmit value="Update"/>
   </dfForm>
 

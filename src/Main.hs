@@ -4,6 +4,9 @@
 
 module Main where
 
+import Text.Parsec.Char
+import Text.Parsec
+import Data.Time.Calendar
 import Control.Concurrent (forkIO, threadDelay)
 import Data.List (sort)
 import           Control.Monad
@@ -25,6 +28,8 @@ import           Database.PostgreSQL.Simple         (ConnectInfo (..),
                                                      close, connectPostgreSQL,
                                                      execute, execute_, query, query_)
 import           Database.PostgreSQL.Simple.FromRow
+import           Database.PostgreSQL.Simple.FromField
+import           Database.PostgreSQL.Simple.ToField
 import           GHC.IO.Encoding                    (setLocaleEncoding, utf8)
 import           Network.Wai                        (Response, pathInfo)
 import           Network.Wai.Handler.Warp           (run)
@@ -131,7 +136,7 @@ larcenyServe ctxt = do
                      , anything ==> \ctxt -> render ctxt idx
                      ]
 
-data TodoData = TodoData Text (Maybe UTCTime)
+data TodoData = TodoData Text (Maybe UTCTime) (Maybe Repeat)
 
 data Todo = Todo { tId :: Int
                  , tDescription :: Text
@@ -139,7 +144,7 @@ data Todo = Todo { tId :: Int
                  , tModeId :: Int
                  , tSnoozeTill :: Maybe UTCTime
                  , tDeadlineAt :: Maybe UTCTime
-                 , tRepeatAt :: Maybe Int
+                 , tRepeatAt :: Maybe Repeat
                  , tRepeatTimes :: Maybe Int
                  , tMagnitude :: Maybe Int
                  , tDoneAt :: Maybe UTCTime
@@ -157,6 +162,36 @@ instance FromRow Todo where
                  <*> field
                  <*> field
 
+data Repeat = RepeatDays Integer | RepeatMonths Integer
+
+instance Show Repeat where
+  show (RepeatDays n) = show n <> "D"
+  show (RepeatMonths m) = show m <> "M"
+
+instance Read Repeat where
+  readsPrec _ s = case parseRepeat s of
+                    Nothing -> []
+                    Just r -> [(r, "")]
+
+parseRepeat :: String -> Maybe Repeat
+parseRepeat s = either (const Nothing) Just (parse repeatParser "" s)
+    where repeatParser = do n <- read <$> many1 digit
+                            res <- (oneOf "Dd" *> return (RepeatDays n)) <|>
+                                   (oneOf "Mm" *> return (RepeatMonths n))
+                            eof
+                            return res
+
+
+instance FromField Repeat where
+  fromField f x = do s :: String <- fromField f x
+                     maybe (returnError ConversionFailed f "Failed to parse field") return (parseRepeat s)
+
+instance ToField Repeat where
+  toField r = toField $ show r
+
+addRepeat :: UTCTime -> Repeat -> UTCTime
+addRepeat (UTCTime day time) (RepeatDays n) = UTCTime (addDays n day) time
+addRepeat (UTCTime day time) (RepeatMonths m) = UTCTime (addGregorianMonthsClip m day) time
 
 data Mode = Mode { mId :: Int
                  , mName :: Text
@@ -184,6 +219,7 @@ timezone = unsafePerformIO getCurrentTimeZone
 todoForm :: Maybe Todo -> Form Text IO TodoData
 todoForm mt = TodoData <$> "description" .: text (tDescription <$> mt)
                        <*> "deadline_at" .: optionalUtcTimeFormlet "%F" "%I:%M %p" timezone (tDeadlineAt =<< mt)
+                       <*> "repeat_at" .: optionalStringRead "Must be in form 10D (for every 10 days) or 2M (for every 2 months)" (join (tRepeatAt <$> mt))
 
 mkTimestamp :: UTCTime -> Text
 mkTimestamp = T.pack . formatTime defaultTimeLocale "%F %I:%M%P"
@@ -196,6 +232,7 @@ todoSubs t = L.subs
   ,("not-done", if isNothing (tDoneAt t) then L.fillChildren else L.textFill "")
   ,("deadline", if isNothing (tDeadlineAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ mkTimestamp (fromJust (tDeadlineAt t)))]))
   ,("done_at", if isNothing (tDoneAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ mkTimestamp (fromJust (tDoneAt t)))]))
+  ,("repeat_at", if isNothing (tRepeatAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("interval", L.textFill $ tshow (fromJust $ tRepeatAt t))]))
   ]
 
 
@@ -215,9 +252,9 @@ getOrCreateMode ctxt account mode =
                                       (x:_) -> return x :: IO Mode
                                       [] -> head <$> query c "insert into modes (name, account) values (?,?) returning id, name, account" (mode, account)
 
-newTodo :: Ctxt -> Mode -> Text -> Maybe UTCTime -> IO (Maybe Todo)
-newTodo ctxt mode description deadline_at = do
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id, deadline_at) values (?,?, ?) returning id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, NULL as done_at" (description, mId mode, deadline_at)
+newTodo :: Ctxt -> Mode -> Text -> Maybe UTCTime -> Maybe Repeat -> IO (Maybe Todo)
+newTodo ctxt mode description deadline_at repeat_at = do
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id, deadline_at, repeat_at) values (?,?,?,?) returning id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, NULL as done_at" (description, mId mode, deadline_at, repeat_at)
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
@@ -248,7 +285,7 @@ markDone ctxt account id = do
       withResource (db ctxt) $ \c -> void $ execute c "insert into dones (todo_id) (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (account, id)
       case (tDeadlineAt todo, tRepeatAt todo) of
         (Just dead, Just repeat) ->
-          updateTodo ctxt (todo { tDeadlineAt = Just $ addUTCTime (fromIntegral $ repeat * 60 * 60 * 24) dead, tSnoozeTill = Just dead })
+          updateTodo ctxt (todo { tDeadlineAt = Just $ addRepeat dead repeat, tSnoozeTill = Just dead })
         _ -> return ()
 
 markUndone :: Ctxt -> Text -> Int -> IO ()
@@ -257,7 +294,7 @@ markUndone ctxt account id =
 
 updateTodo :: Ctxt -> Todo -> IO ()
 updateTodo ctxt todo =
-  withResource (db ctxt) $ \c -> void $ execute c "update todos set description = ?, deadline_at = ?, snooze_till = ? where id = ?" (tDescription todo, tDeadlineAt todo, tSnoozeTill todo, tId todo)
+  withResource (db ctxt) $ \c -> void $ execute c "update todos set description = ?, deadline_at = ?, snooze_till = ?, repeat_at = ? where id = ?" (tDescription todo, tDeadlineAt todo, tSnoozeTill todo, tRepeatAt todo, tId todo)
 
 
 redirectIndex :: Text -> IO (Maybe Response)
@@ -271,10 +308,10 @@ indexH ctxt account = do
   defmode <- getOrCreateMode ctxt account "default"
   runForm ctxt "todo" (todoForm Nothing) $ \td ->
     case td of
-      (_, Just (TodoData desc deadline)) -> do mt <- newTodo ctxt defmode desc deadline
-                                               case mt of
-                                                 Nothing -> redirectIndex account
-                                                 Just todo -> redirectEdit account todo
+      (_, Just (TodoData desc deadline repeat)) -> do mt <- newTodo ctxt defmode desc deadline repeat
+                                                      case mt of
+                                                        Nothing -> redirectIndex account
+                                                        Just todo -> redirectEdit account todo
       (v, Nothing) -> do
         todos <- getTodos ctxt defmode
         renderWith ctxt (formFills v <> L.subs [("todos", L.mapSubs todoSubs todos)
@@ -297,8 +334,8 @@ editH ctxt account id = do
     Just todo ->
       runForm ctxt "todo" (todoForm $ Just todo) $ \td ->
         case td of
-          (_, Just (TodoData desc deadline)) -> do updateTodo ctxt (todo { tDescription = desc, tDeadlineAt = deadline})
-                                                   redirectIndex account
+          (_, Just (TodoData desc deadline repeat)) -> do updateTodo ctxt (todo { tDescription = desc, tDeadlineAt = deadline, tRepeatAt = repeat})
+                                                          redirectIndex account
           (v, Nothing) -> do
             renderWith ctxt (formFills v <> L.subs [("todo", L.fillChildrenWith $ todoSubs todo)
                                                    ,("account", L.textFill account)]) "edit"

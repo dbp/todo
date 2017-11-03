@@ -217,7 +217,7 @@ timezone :: TimeZone
 timezone = unsafePerformIO getCurrentTimeZone
 
 todoForm :: Maybe Todo -> Form Text IO TodoData
-todoForm mt = TodoData <$> "description" .: text (tDescription <$> mt)
+todoForm mt = TodoData <$> "description" .: check "Can't be empty" (not . T.null) (text (tDescription <$> mt))
                        <*> "deadline_at" .: optionalUtcTimeFormlet "%F" "%I:%M %p" timezone (tDeadlineAt =<< mt)
                        <*> "repeat_at" .: optionalStringRead "Must be in form 10D (for every 10 days) or 2M (for every 2 months)" (join (tRepeatAt <$> mt))
 

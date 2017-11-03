@@ -232,6 +232,8 @@ todoSubs t = L.subs
   ,("not-done", if isNothing (tDoneAt t) then L.fillChildren else L.textFill "")
   ,("deadline", if isNothing (tDeadlineAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ mkTimestamp (fromJust (tDeadlineAt t)))]))
   ,("done_at", if isNothing (tDoneAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ mkTimestamp (fromJust (tDoneAt t)))]))
+  ,("snooze_till", if isNothing (tSnoozeTill t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ mkTimestamp (fromJust (tSnoozeTill t)))]))
+  ,("not_snooze_till", if isJust (tSnoozeTill t) then L.textFill "" else L.fillChildren)
   ,("repeat_at", if isNothing (tRepeatAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("interval", L.textFill $ tshow (fromJust $ tRepeatAt t))]))
   ]
 
@@ -258,15 +260,19 @@ newTodo ctxt mode description deadline_at repeat_at = do
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, NULL, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
+
+getSnoozed :: Ctxt -> Mode -> IO [Todo]
+getSnoozed ctxt mode =
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and T.snooze_till > now() order by deadline_at desc, created_at asc" (Only $ mId mode)
 
 getDones :: Ctxt -> Mode -> IO [Todo]
 getDones ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join dones as D on D.todo_id = T.id where mode_id = ? and D.created_at is not null order by D.created_at desc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, CASE snooze_till < now() WHEN TRUE THEN NULL ELSE snooze_till END, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join dones as D on D.todo_id = T.id where mode_id = ? and D.created_at is not null order by D.created_at desc" (Only $ mId mode)
 
 getTodo :: Ctxt -> Text -> Int -> IO (Maybe Todo)
 getTodo ctxt account id =
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) AS D on D.todo_id = T.id join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, T.created_at, mode_id, CASE snooze_till < now() WHEN TRUE THEN NULL ELSE snooze_till END, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) AS D on D.todo_id = T.id join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
 
 getNotifications :: Ctxt -> Todo -> IO [Notification]
 getNotifications ctxt todo =
@@ -300,8 +306,8 @@ updateTodo ctxt todo =
 redirectIndex :: Text -> IO (Maybe Response)
 redirectIndex account = redirect $ "/?acnt=" <> account
 
-redirectEdit :: Text -> Todo -> IO (Maybe Response)
-redirectEdit account todo = redirect $ "/todos/" <> tshow (tId todo) <> "/edit?acnt=" <> account
+redirectTodo :: Text -> Todo -> IO (Maybe Response)
+redirectTodo account todo = redirect $ "/todos/" <> tshow (tId todo) <> "/edit?acnt=" <> account
 
 indexH :: Ctxt -> Text -> IO (Maybe Response)
 indexH ctxt account = do
@@ -311,7 +317,7 @@ indexH ctxt account = do
       (_, Just (TodoData desc deadline repeat)) -> do mt <- newTodo ctxt defmode desc deadline repeat
                                                       case mt of
                                                         Nothing -> redirectIndex account
-                                                        Just todo -> redirectEdit account todo
+                                                        Just todo -> redirectTodo account todo
       (v, Nothing) -> do
         todos <- getTodos ctxt defmode
         renderWith ctxt (formFills v <> L.subs [("todos", L.mapSubs todoSubs todos)
@@ -326,6 +332,16 @@ archiveH ctxt account = do
                           ,("account", L.textFill account)])
     "archive"
 
+
+snoozedH :: Ctxt -> Text -> IO (Maybe Response)
+snoozedH ctxt account = do
+  defmode <- getOrCreateMode ctxt account "default"
+  dones <- getSnoozed ctxt defmode
+  renderWith ctxt (L.subs [("todos", L.mapSubs todoSubs dones)
+                          ,("account", L.textFill account)])
+    "snoozed"
+
+
 editH :: Ctxt -> Text -> Int -> IO (Maybe Response)
 editH ctxt account id = do
   mtodo <- getTodo ctxt account id
@@ -338,8 +354,7 @@ editH ctxt account id = do
                                                           redirectIndex account
           (v, Nothing) -> do
             renderWith ctxt (formFills v <> L.subs [("todo", L.fillChildrenWith $ todoSubs todo)
-                                                   ,("account", L.textFill account)
-                                                   ,("id", L.textFill $ tshow (tId todo))]) "edit"
+                                                   ,("account", L.textFill account)]) "edit"
 
 doneH :: Ctxt -> Text -> Int -> IO (Maybe Response)
 doneH ctxt account id = do
@@ -363,7 +378,17 @@ snoozeH ctxt account id t = do
                  "W" -> addDays 7 day
                  "M" -> addGregorianMonthsClip 1 day
       updateTodo ctxt (todo { tSnoozeTill = Just (UTCTime t' time)})
-      redirectIndex account
+      redirectTodo account todo
+
+unSnoozeH :: Ctxt -> Text -> Int -> IO (Maybe Response)
+unSnoozeH ctxt account id = do
+  mtodo <- getTodo ctxt account id
+  case mtodo of
+    Nothing -> return Nothing
+    Just todo -> do
+      updateTodo ctxt (todo { tSnoozeTill = Nothing})
+      redirectTodo account todo
+
 
 updateH :: Ctxt -> Text -> Int -> Text -> IO (Maybe Response)
 updateH ctxt account id txt = do
@@ -378,9 +403,11 @@ authed :: Ctxt -> Text -> IO (Maybe Response)
 authed ctxt account =
   route ctxt [ end ==> flip indexH account
              , path "archive" ==> flip archiveH account
+             , path "snoozed" ==> flip snoozedH account
              , path "todos" // segment // path "done" ==> flip doneH account
              , path "todos" // segment // path "undone" ==> flip undoneH account
              , path "todos" // segment // path "snooze" // param "t" ==> flip snoozeH account
+             , path "todos" // segment // path "unsnooze" ==> flip unSnoozeH account
              , path "todos" // segment // path "edit" ==> flip editH account
              , path "todos" // segment // path "update" // param "txt" !=> flip updateH account
              ]

@@ -22,5 +22,7 @@
     </todos>
   </ul>
 
+  <a class="done" href="/snoozed?acnt=${account}">View Snoozed</a>
+
   <a class="done" href="/archive?acnt=${account}">View Archive</a>
 </apply>

@@ -17,10 +17,17 @@
     </dfSubView>
     repeat: <dfInput class="small" ref="repeat_at"/>
     snooze:
-    <a class="button" href="/todos/${id}/snooze?t=D&acnt=${account}">D</a> |
-    <a class="button" href="/todos/${id}/snooze?t=W&acnt=${account}">W</a> |
-    <a class="button" href="/todos/${id}/snooze?t=M&acnt=${account}">M</a> 
-    <br/>
+    <todo>
+      <snooze_till>
+        <span class="deadline"><timestamp/><a class="button" href="/todos/${id}/unsnooze?acnt=${account}">X</a></span> 
+      </snooze_till>
+      <not_snooze_till>
+        <a class="button" href="/todos/${id}/snooze?t=D&acnt=${account}">D</a> |
+        <a class="button" href="/todos/${id}/snooze?t=W&acnt=${account}">W</a> |
+        <a class="button" href="/todos/${id}/snooze?t=M&acnt=${account}">M</a>
+      </not_snooze_till>
+    </todo>
+      <br/>
     <dfInputSubmit value="Update"/>
   </dfForm>
 

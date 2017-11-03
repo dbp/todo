@@ -235,3 +235,10 @@ doneTodos mode_id' =
   ((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), created_at') <- allTodos allDones mode_id' -< ()
   restrict -< not (isNull created_at')
   returnA -< Todo id description created_at live_at mode_id snooze_till deadline_at repeat_at repeat_times magnitude created_at'
+
+todoById :: Int -> Int -> Query TodoColumn
+todoById mode_id' id' = proc () -> do
+  ((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), created_at') <- allTodos relevantDones mode_id' -< ()
+  restrict -< constant id' .== id
+  restrict -< constant mode_id' .== mode_id
+  returnA -< Todo id description created_at live_at mode_id snooze_till deadline_at repeat_at repeat_times magnitude created_at'

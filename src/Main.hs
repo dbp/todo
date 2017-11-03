@@ -173,6 +173,9 @@ getMode :: Ctxt -> Int -> IO (Maybe Mode)
 getMode ctxt id =
   withResource (db ctxt) $ \c -> listToMaybe <$> query c "select id, name, account from modes where id = ?" (Only id)
 
+getModeByAccount :: Ctxt -> Text -> IO (Maybe Mode)
+getModeByAccount ctxt account =
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select id, name, account from modes where account = ?" (Only account)
 
 getOrCreateMode :: Ctxt -> Text -> Text -> IO Mode
 getOrCreateMode ctxt account mode =
@@ -201,9 +204,16 @@ getDonesForTodo :: Ctxt -> Todo -> IO [UTCTime]
 getDonesForTodo ctxt todo =
   withResource (db ctxt) $ \c -> map (\(Only x) -> x) <$> query c "select created_at from dones where todo_id = ? order by created_at desc" (Only (tId todo))
 
+getTodoById :: Ctxt -> Int -> Int -> IO (Maybe Todo)
+getTodoById ctxt mode_id id =
+  listToMaybe <$> runQuery ctxt (todoById mode_id id)
+
 getTodo :: Ctxt -> Text -> Int -> IO (Maybe Todo)
-getTodo ctxt account id =
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, T.created_at, live_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.live_at) AS D on D.todo_id = T.id join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
+getTodo ctxt account id = do
+  m <- getModeByAccount ctxt account
+  case m of
+    Nothing -> return Nothing
+    Just mode -> getTodoById ctxt (mId mode) id
 
 getNotifications :: Ctxt -> Todo -> IO [Notification]
 getNotifications ctxt todo =

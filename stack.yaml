@@ -50,6 +50,7 @@ extra-deps:
 - heroku-0.1.2.3
 - html-entities-1.1.4
 - pushover-0.1.0.1
+- opaleye-0.6.0.0
 # Override default flag values for local packages and extra-deps
 flags: {}
 

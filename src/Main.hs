@@ -4,6 +4,7 @@
 
 module Main where
 
+import Opaleye (runQuery)
 import Control.Monad.Trans (liftIO)
 import Text.Parsec.Char
 import Text.Parsec
@@ -48,6 +49,7 @@ import System.Directory (listDirectory)
 import Configuration.Dotenv
 import qualified Network.Pushover as Push
 
+import State
 
 data Ctxt = Ctxt { _req     :: FnRequest
                  , db       :: Pool Connection
@@ -139,87 +141,6 @@ larcenyServe ctxt = do
 
 data TodoData = TodoData Text (Maybe UTCTime) (Maybe Repeat)
 
-data Todo = Todo { tId :: Int
-                 , tDescription :: Text
-                 , tCreatedAt :: UTCTime
-                 , tLiveAt :: UTCTime
-                 , tModeId :: Int
-                 , tSnoozeTill :: Maybe UTCTime
-                 , tDeadlineAt :: Maybe UTCTime
-                 , tRepeatAt :: Maybe Repeat
-                 , tRepeatTimes :: Maybe Int
-                 , tMagnitude :: Maybe Int
-                 , tDoneAt :: Maybe UTCTime
-                 } deriving (Show)
-
-instance FromRow Todo where
-  fromRow = Todo <$> field
-                 <*> field
-                 <*> field
-                 <*> field
-                 <*> field
-                 <*> field
-                 <*> field
-                 <*> field
-                 <*> field
-                 <*> field
-                 <*> field
-
-data Repeat = RepeatDays Integer | RepeatMonths Integer
-
-instance Show Repeat where
-  show (RepeatDays n) = show n <> "D"
-  show (RepeatMonths m) = show m <> "M"
-
-instance Read Repeat where
-  readsPrec _ s = case parseRepeat s of
-                    Nothing -> []
-                    Just r -> [(r, "")]
-
-parseRepeat :: String -> Maybe Repeat
-parseRepeat s = either (const Nothing) Just (parse repeatParser "" s)
-    where repeatParser = do n <- read <$> many1 digit
-                            res <- (oneOf "Dd" *> return (RepeatDays n)) <|>
-                                   (oneOf "Mm" *> return (RepeatMonths n))
-                            eof
-                            return res
-
-
-instance FromField Repeat where
-  fromField f x = do s :: String <- fromField f x
-                     maybe (returnError ConversionFailed f "Failed to parse field") return (parseRepeat s)
-
-instance ToField Repeat where
-  toField r = toField $ show r
-
-addRepeat :: UTCTime -> Repeat -> UTCTime
-addRepeat (UTCTime day time) (RepeatDays n) = UTCTime (addDays n day) time
-addRepeat (UTCTime day time) (RepeatMonths m) = UTCTime (addGregorianMonthsClip m day) time
-
-subRepeat :: UTCTime -> Repeat -> UTCTime
-subRepeat t (RepeatDays n) = addRepeat t (RepeatDays (-n))
-subRepeat t (RepeatMonths n) = addRepeat t (RepeatMonths (-n))
-
-data Mode = Mode { mId :: Int
-                 , mName :: Text
-                 , mAccount :: Text
-                 }
-
-instance FromRow Mode where
-  fromRow = Mode <$> field
-                 <*> field
-                 <*> field
-
-data Notification = Notification { nId :: Int
-                                 , nTodoId :: Int
-                                 , nCreatedAt :: UTCTime
-                                 }
-
-instance FromRow Notification where
-  fromRow = Notification <$> field
-                         <*> field
-                         <*> field
-
 timezone :: TimeZone
 timezone = unsafePerformIO getCurrentTimeZone
 
@@ -276,7 +197,7 @@ newTodo ctxt mode description deadline_at repeat_at = do
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, live_at, mode_id, NULL, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.live_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> runQuery c (activeTodos (mId mode)) -- query c "select T.id, description, T.created_at, live_at, mode_id, NULL, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.live_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
 
 getSnoozed :: Ctxt -> Mode -> IO [Todo]
 getSnoozed ctxt mode =

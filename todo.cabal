@@ -41,6 +41,8 @@ executable todo
                      , dotenv
                      , pushover
                      , parsec
+                     , opaleye
+                     , product-profunctors
   default-language:    Haskell2010
 
 test-suite todo-test

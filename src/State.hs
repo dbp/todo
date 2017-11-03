@@ -11,15 +11,16 @@ module State where
 
 import Control.Arrow (returnA, (>>>))
 import Data.Monoid
-import           Prelude hiding (sum, null)
+import           Prelude hiding (sum, null, not)
 import           Opaleye (Column, Nullable, matchNullable, isNull,
                           Table, queryTable, orderBy, desc, asc,
                            Query, QueryArr, restrict, (.==), (.<=), (.&&), (.<),
-                           (.===), (.||), (.&&), (.<), (.>),
+                           (.===), (.||), (.&&), (.<), (.>), not,
                            (.++), ifThenElse, pgString, aggregate, groupBy,
-                           count, avg, sum, leftJoin, runQuery, leftJoin,
+                           count, avg, sum, leftJoin, leftJoin,
                            showSqlForPostgres, Unpackspec, constant,
                            PGInt4, PGInt8, PGTimestamptz, PGText, PGDate, PGFloat8, PGBool)
+import qualified Opaleye as O
 import Opaleye.Table (table, tableColumn)
 import Opaleye.Column (null, isNull)
 import           Data.Profunctor.Product (p2, p3, p10)
@@ -39,6 +40,11 @@ import Opaleye.Internal.RunQuery (QueryRunnerColumnDefault(..), fieldQueryRunner
 import           Database.PostgreSQL.Simple.FromRow
 import           Database.PostgreSQL.Simple.FromField hiding (tableColumn)
 import           Database.PostgreSQL.Simple.ToField
+import Data.Pool
+
+import Context
+
+runQuery ctxt q = withResource (db ctxt) $ \c -> O.runQuery c q
 
 pgNow :: Column PGTimestamptz
 pgNow = Column (FunExpr "now" [])
@@ -190,23 +196,42 @@ doneTable = table "dones"
 allDones :: Query (Column PGInt4, Column PGInt4, Column PGTimestamptz)
 allDones = queryTable doneTable
 
-todoDones :: Query (Column PGInt4, Column PGInt4, Column PGTimestamptz)
-todoDones = proc () -> do
+relevantDones :: Query (Column PGInt4, Column PGInt4, Column PGTimestamptz)
+relevantDones = proc () -> do
   done@(_, todo_id', created_at') <- allDones -< ()
   (id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude) <- queryTable todoTable -< ()
   restrict -< id .== todo_id'
   restrict -< isNull deadline_at .|| (created_at' .> live_at)
   returnA -< done
 
-
+allTodos :: Query (Column PGInt4, Column PGInt4, Column PGTimestamptz) -> Int -> Query (TodoTable, Column (Nullable PGTimestamptz))
+allTodos dones mode_id' = proc () -> do
+  ((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), (_, todo_id, created_at')) <- (leftJoin (queryTable todoTable)
+                     dones
+            (\((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), (_, todo_id, created_at')) -> todo_id .== id) :: Query (TodoTable, (Column (Nullable PGInt4), Column (Nullable PGInt4), Column (Nullable PGTimestamptz)))) -< ()
+  restrict -< mode_id .== constant mode_id'
+  returnA -< ((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), created_at')
 
 activeTodos :: Int -> Query TodoColumn
 activeTodos mode_id' =
     orderBy (desc tDeadlineAt <> asc tCreatedAt) $ proc () -> do
-  ((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), (_, todo_id, created_at')) <- (leftJoin (queryTable todoTable)
-                     todoDones
-            (\((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), (_, todo_id, created_at')) -> todo_id .== id) :: Query (TodoTable, (Column (Nullable PGInt4), Column (Nullable PGInt4), Column (Nullable PGTimestamptz)))) -< ()
-  restrict -< mode_id .== constant mode_id'
+  ((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), created_at') <- allTodos relevantDones mode_id' -< ()
   restrict -< isNull created_at'
-  restrict -< matchNullable (constant True) (\s -> s .< pgNow) snooze_till
+  restrict -< matchNullable (constant True) (\s -> s .<= pgNow) snooze_till
+  returnA -< Todo id description created_at live_at mode_id snooze_till deadline_at repeat_at repeat_times magnitude created_at'
+
+snoozedTodos :: Int -> Query TodoColumn
+snoozedTodos mode_id' =
+  orderBy (desc tDeadlineAt <> asc tCreatedAt) $ proc () -> do
+  ((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), created_at') <- allTodos relevantDones mode_id' -< ()
+  restrict -< isNull created_at'
+  restrict -< matchNullable (constant False) (\s -> s .> pgNow) snooze_till
+  returnA -< Todo id description created_at live_at mode_id snooze_till deadline_at repeat_at repeat_times magnitude created_at'
+
+
+doneTodos :: Int -> Query TodoColumn
+doneTodos mode_id' =
+  orderBy (desc tDoneAt) $ proc () -> do
+  ((id,description,created_at,live_at,mode_id,snooze_till,deadline_at,repeat_at,repeat_times,magnitude), created_at') <- allTodos allDones mode_id' -< ()
+  restrict -< not (isNull created_at')
   returnA -< Todo id description created_at live_at mode_id snooze_till deadline_at repeat_at repeat_times magnitude created_at'

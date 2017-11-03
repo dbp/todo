@@ -4,7 +4,6 @@
 
 module Main where
 
-import Opaleye (runQuery)
 import Control.Monad.Trans (liftIO)
 import Text.Parsec.Char
 import Text.Parsec
@@ -49,18 +48,9 @@ import System.Directory (listDirectory)
 import Configuration.Dotenv
 import qualified Network.Pushover as Push
 
+import Context
 import State
 
-data Ctxt = Ctxt { _req     :: FnRequest
-                 , db       :: Pool Connection
-                 , library  :: Library
-                 , pushover :: Maybe (Push.APIToken, Push.UserKey)
-                 , siteurl :: Text
-                 }
-
-instance RequestContext Ctxt where
-  getRequest = _req
-  setRequest c r = c { _req = r }
 
 render :: Ctxt -> Text -> IO (Maybe Response)
 render ctxt = renderWith ctxt mempty
@@ -197,15 +187,15 @@ newTodo ctxt mode description deadline_at repeat_at = do
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
-  withResource (db ctxt) $ \c -> runQuery c (activeTodos (mId mode)) -- query c "select T.id, description, T.created_at, live_at, mode_id, NULL, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.live_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
-
+  runQuery ctxt (activeTodos (mId mode))
+  
 getSnoozed :: Ctxt -> Mode -> IO [Todo]
 getSnoozed ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, live_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.live_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and T.snooze_till > now() order by deadline_at desc, created_at asc" (Only $ mId mode)
+  runQuery ctxt (snoozedTodos (mId mode))
 
 getDones :: Ctxt -> Mode -> IO [Todo]
 getDones ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, live_at, mode_id, CASE snooze_till < now() WHEN TRUE THEN NULL ELSE snooze_till END, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join dones as D on D.todo_id = T.id where mode_id = ? and D.created_at is not null order by D.created_at desc" (Only $ mId mode)
+  runQuery ctxt (doneTodos (mId mode))
 
 getDonesForTodo :: Ctxt -> Todo -> IO [UTCTime]
 getDonesForTodo ctxt todo =

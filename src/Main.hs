@@ -142,6 +142,7 @@ data TodoData = TodoData Text (Maybe UTCTime) (Maybe Repeat)
 data Todo = Todo { tId :: Int
                  , tDescription :: Text
                  , tCreatedAt :: UTCTime
+                 , tLiveAt :: UTCTime
                  , tModeId :: Int
                  , tSnoozeTill :: Maybe UTCTime
                  , tDeadlineAt :: Maybe UTCTime
@@ -153,6 +154,7 @@ data Todo = Todo { tId :: Int
 
 instance FromRow Todo where
   fromRow = Todo <$> field
+                 <*> field
                  <*> field
                  <*> field
                  <*> field
@@ -270,23 +272,27 @@ getOrCreateMode ctxt account mode =
 
 newTodo :: Ctxt -> Mode -> Text -> Maybe UTCTime -> Maybe Repeat -> IO (Maybe Todo)
 newTodo ctxt mode description deadline_at repeat_at = do
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id, deadline_at, repeat_at) values (?,?,?,?) returning id, description, created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, NULL as done_at" (description, mId mode, deadline_at, repeat_at)
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "insert into todos (description, mode_id, deadline_at, repeat_at) values (?,?,?,?) returning id, description, created_at, live_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, NULL as done_at" (description, mId mode, deadline_at, repeat_at)
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, NULL, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.deadline_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, live_at, mode_id, NULL, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.live_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
 
 getSnoozed :: Ctxt -> Mode -> IO [Todo]
 getSnoozed ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.deadline_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and T.snooze_till > now() order by deadline_at desc, created_at asc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, live_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.live_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and T.snooze_till > now() order by deadline_at desc, created_at asc" (Only $ mId mode)
 
 getDones :: Ctxt -> Mode -> IO [Todo]
 getDones ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, CASE snooze_till < now() WHEN TRUE THEN NULL ELSE snooze_till END, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join dones as D on D.todo_id = T.id where mode_id = ? and D.created_at is not null order by D.created_at desc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, live_at, mode_id, CASE snooze_till < now() WHEN TRUE THEN NULL ELSE snooze_till END, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join dones as D on D.todo_id = T.id where mode_id = ? and D.created_at is not null order by D.created_at desc" (Only $ mId mode)
+
+getDonesForTodo :: Ctxt -> Todo -> IO [UTCTime]
+getDonesForTodo ctxt todo =
+  withResource (db ctxt) $ \c -> map (\(Only x) -> x) <$> query c "select created_at from dones where todo_id = ? order by created_at desc" (Only (tId todo))
 
 getTodo :: Ctxt -> Text -> Int -> IO (Maybe Todo)
 getTodo ctxt account id =
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) AS D on D.todo_id = T.id join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, T.created_at, live_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.live_at) AS D on D.todo_id = T.id join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
 
 getNotifications :: Ctxt -> Todo -> IO [Notification]
 getNotifications ctxt todo =
@@ -312,16 +318,16 @@ markDone ctxt account id = do
           let snooze = case tSnoozeTill todo of
                          Nothing -> dead
                          Just old_snooze -> if old_snooze > subRepeat dead repeat then addUTCTime (diffUTCTime old_snooze (subRepeat dead repeat)) dead else dead in
-          updateTodo ctxt (todo { tDeadlineAt = Just $ addRepeat dead repeat, tSnoozeTill = Just snooze })
+          updateTodo ctxt (todo { tDeadlineAt = Just $ addRepeat dead repeat, tSnoozeTill = Just snooze, tLiveAt = dead })
         _ -> return ()
 
 markUndone :: Ctxt -> Text -> Int -> IO ()
 markUndone ctxt account id =
-  withResource (db ctxt) $ \c -> void $ execute c "delete from dones where id in (select id from dones where todo_id = ? order by created_at desc limit 1)" (account, id)
+  withResource (db ctxt) $ \c -> void $ execute c "delete from dones where id in (select D.id from dones as D join todos as T on T.id = D.todo_id join modes as M on M.id = T.mode_id where M.account = ? and T.id = ? order by D.created_at desc limit 1)" (account, id)
 
 updateTodo :: Ctxt -> Todo -> IO ()
 updateTodo ctxt todo =
-  withResource (db ctxt) $ \c -> void $ execute c "update todos set description = ?, deadline_at = ?, snooze_till = ?, repeat_at = ? where id = ?" (tDescription todo, tDeadlineAt todo, tSnoozeTill todo, tRepeatAt todo, tId todo)
+  withResource (db ctxt) $ \c -> void $ execute c "update todos set description = ?, live_at = ?, deadline_at = ?, snooze_till = ?, repeat_at = ? where id = ?" (tDescription todo, tLiveAt todo, tDeadlineAt todo, tSnoozeTill todo, tRepeatAt todo, tId todo)
 
 
 redirectIndex :: Text -> IO (Maybe Response)
@@ -374,8 +380,11 @@ editH ctxt account id = do
           (_, Just (TodoData desc deadline repeat)) -> do updateTodo ctxt (todo { tDescription = desc, tDeadlineAt = deadline, tRepeatAt = repeat})
                                                           redirectIndex account
           (v, Nothing) -> do
+            ts <- getDonesForTodo ctxt todo
             renderWith ctxt (formFills v <> L.subs [("todo", L.fillChildrenWith $ todoSubs todo)
-                                                   ,("account", L.textFill account)]) "edit"
+                                                   ,("account", L.textFill account)
+                                                   ,("dones", if length ts > 0 then L.mapSubs (\t -> L.subs [("timestamp", L.textFill (mkTimestamp t))]) ts else L.textFill "")
+                                                   ]) "edit"
 
 doneH :: Ctxt -> Text -> Int -> IO (Maybe Response)
 doneH ctxt account id = do

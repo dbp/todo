@@ -28,7 +28,13 @@
       </not_snooze_till>
     </todo>
       <br/>
-    <dfInputSubmit value="Update"/>
+      <dfInputSubmit value="Update"/>
+      <br/>
+      <ul>
+        <dones>
+          <li>done at <timestamp/></li>
+        </dones>
+      </ul>
   </dfForm>
 
 </apply>

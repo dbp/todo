@@ -408,7 +408,7 @@ snoozeH ctxt account id t = do
                  "W" -> addDays 7 day
                  "M" -> addGregorianMonthsClip 1 day
       updateTodo ctxt (todo { tSnoozeTill = Just (UTCTime t' time)})
-      redirectTodo account todo
+      redirectIndex account
 
 unSnoozeH :: Ctxt -> Text -> Int -> IO (Maybe Response)
 unSnoozeH ctxt account id = do

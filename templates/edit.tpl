@@ -5,17 +5,21 @@
   <dfForm method="POST">
     <dfChildErrorList ref=""/>
     <dfInputTextArea ref="description"/>
+    <br/>
     by
     <dfSubView ref="deadline_at">
       date:
-      <dfInput class="date" ref="date"/>
+      <dfInput class="small date" ref="date"/>
         
       time:
-      <dfInput class="time" ref="time"/>
+      <dfInput class="small time" ref="time"/>
       
     </dfSubView>
-    <br/>
-    repeat: <dfInput ref="repeat_at"/>
+    repeat: <dfInput class="small" ref="repeat_at"/>
+    snooze:
+    <a class="button" href="/todos/${id}/snooze?t=D&acnt=${account}">D</a> |
+    <a class="button" href="/todos/${id}/snooze?t=W&acnt=${account}">W</a> |
+    <a class="button" href="/todos/${id}/snooze?t=M&acnt=${account}">M</a> 
     <br/>
     <dfInputSubmit value="Update"/>
   </dfForm>

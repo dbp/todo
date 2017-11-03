@@ -338,7 +338,8 @@ editH ctxt account id = do
                                                           redirectIndex account
           (v, Nothing) -> do
             renderWith ctxt (formFills v <> L.subs [("todo", L.fillChildrenWith $ todoSubs todo)
-                                                   ,("account", L.textFill account)]) "edit"
+                                                   ,("account", L.textFill account)
+                                                   ,("id", L.textFill $ tshow (tId todo))]) "edit"
 
 doneH :: Ctxt -> Text -> Int -> IO (Maybe Response)
 doneH ctxt account id = do
@@ -350,6 +351,19 @@ undoneH ctxt account id = do
   markUndone ctxt account id
   redirectIndex account
 
+snoozeH :: Ctxt -> Text -> Int -> Text -> IO (Maybe Response)
+snoozeH ctxt account id t = do
+  mtodo <- getTodo ctxt account id
+  case mtodo of
+    Nothing -> return Nothing
+    Just todo -> do
+      UTCTime day time <- getCurrentTime
+      let t' = case t of
+                 "D" -> addDays 1 day
+                 "W" -> addDays 7 day
+                 "M" -> addGregorianMonthsClip 1 day
+      updateTodo ctxt (todo { tSnoozeTill = Just (UTCTime t' time)})
+      redirectIndex account
 
 updateH :: Ctxt -> Text -> Int -> Text -> IO (Maybe Response)
 updateH ctxt account id txt = do
@@ -366,8 +380,10 @@ authed ctxt account =
              , path "archive" ==> flip archiveH account
              , path "todos" // segment // path "done" ==> flip doneH account
              , path "todos" // segment // path "undone" ==> flip undoneH account
+             , path "todos" // segment // path "snooze" // param "t" ==> flip snoozeH account
              , path "todos" // segment // path "edit" ==> flip editH account
-             , path "todos" // segment // path "update" // param "txt" !=> flip updateH account]
+             , path "todos" // segment // path "update" // param "txt" !=> flip updateH account
+             ]
 
 withAccount :: Ctxt -> Text -> IO (Maybe Response)
 withAccount = authed

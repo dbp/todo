@@ -4,6 +4,7 @@
 
 module Main where
 
+import Control.Monad.Trans (liftIO)
 import Text.Parsec.Char
 import Text.Parsec
 import Data.Time.Calendar
@@ -193,6 +194,10 @@ addRepeat :: UTCTime -> Repeat -> UTCTime
 addRepeat (UTCTime day time) (RepeatDays n) = UTCTime (addDays n day) time
 addRepeat (UTCTime day time) (RepeatMonths m) = UTCTime (addGregorianMonthsClip m day) time
 
+subRepeat :: UTCTime -> Repeat -> UTCTime
+subRepeat t (RepeatDays n) = addRepeat t (RepeatDays (-n))
+subRepeat t (RepeatMonths n) = addRepeat t (RepeatMonths (-n))
+
 data Mode = Mode { mId :: Int
                  , mName :: Text
                  , mAccount :: Text
@@ -232,8 +237,17 @@ todoSubs t = L.subs
   ,("not-done", if isNothing (tDoneAt t) then L.fillChildren else L.textFill "")
   ,("deadline", if isNothing (tDeadlineAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ mkTimestamp (fromJust (tDeadlineAt t)))]))
   ,("done_at", if isNothing (tDoneAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ mkTimestamp (fromJust (tDoneAt t)))]))
-  ,("snooze_till", if isNothing (tSnoozeTill t) then L.textFill "" else L.fillChildrenWith (L.subs [("timestamp", L.textFill $ mkTimestamp (fromJust (tSnoozeTill t)))]))
-  ,("not_snooze_till", if isJust (tSnoozeTill t) then L.textFill "" else L.fillChildren)
+  ,("snooze_till", L.Fill $ \_ (pth, L.Template tpl) l ->
+                              do now <- liftIO getCurrentTime
+                                 case tSnoozeTill t of
+                                   Just time | time > now -> tpl pth (L.subs [("timestamp", L.textFill $ mkTimestamp time)]) l
+                                   _ -> return $ "")
+  ,("not_snooze_till",
+    L.Fill $ \_ (pth, L.Template tpl) l ->
+                              do now <- liftIO getCurrentTime
+                                 case tSnoozeTill t of
+                                   Just time | time > now -> return $ ""
+                                   _ -> tpl pth (L.subs []) l)
   ,("repeat_at", if isNothing (tRepeatAt t) then L.textFill "" else L.fillChildrenWith (L.subs [("interval", L.textFill $ tshow (fromJust $ tRepeatAt t))]))
   ]
 
@@ -260,11 +274,11 @@ newTodo ctxt mode description deadline_at repeat_at = do
 
 getTodos :: Ctxt -> Mode -> IO [Todo]
 getTodos ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, NULL, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, NULL, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.deadline_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and (T.snooze_till is null or T.snooze_till < now()) order by deadline_at desc, created_at asc" (Only $ mId mode)
 
 getSnoozed :: Ctxt -> Mode -> IO [Todo]
 getSnoozed ctxt mode =
-  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and T.snooze_till > now() order by deadline_at desc, created_at asc" (Only $ mId mode)
+  withResource (db ctxt) $ \c -> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.deadline_at is null or D.created_at > T.deadline_at) as D on D.todo_id = T.id where mode_id = ? and D.created_at is null and T.snooze_till > now() order by deadline_at desc, created_at asc" (Only $ mId mode)
 
 getDones :: Ctxt -> Mode -> IO [Todo]
 getDones ctxt mode =
@@ -272,7 +286,7 @@ getDones ctxt mode =
 
 getTodo :: Ctxt -> Text -> Int -> IO (Maybe Todo)
 getTodo ctxt account id =
-  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, T.created_at, mode_id, CASE snooze_till < now() WHEN TRUE THEN NULL ELSE snooze_till END, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) AS D on D.todo_id = T.id join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
+  withResource (db ctxt) $ \c -> listToMaybe <$> query c "select T.id, description, T.created_at, mode_id, snooze_till, deadline_at, repeat_at, repeat_times, magnitude, D.created_at as done_at from todos as T left outer join (select D.* from dones as D join todos as T on D.todo_id = T.id where T.repeat_at is null or (D.created_at > T.deadline_at - ((T.repeat_at || ' days') :: interval))) AS D on D.todo_id = T.id join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?" (account, id)
 
 getNotifications :: Ctxt -> Todo -> IO [Notification]
 getNotifications ctxt todo =
@@ -291,7 +305,14 @@ markDone ctxt account id = do
       withResource (db ctxt) $ \c -> void $ execute c "insert into dones (todo_id) (select T.id from todos as T join modes as M on M.id = T.mode_id where M.account = ? and T.id = ?)" (account, id)
       case (tDeadlineAt todo, tRepeatAt todo) of
         (Just dead, Just repeat) ->
-          updateTodo ctxt (todo { tDeadlineAt = Just $ addRepeat dead repeat, tSnoozeTill = Just dead })
+          -- NOTE(dbp 2017-11-03): If it had been snoozed (which we determine
+          -- based on snooze_till being more recent than the previous
+          -- repetition, if it had existed), we will replicate the same period.
+          -- If there was no snooze, we just snooze till the current deadline.
+          let snooze = case tSnoozeTill todo of
+                         Nothing -> dead
+                         Just old_snooze -> if old_snooze > subRepeat dead repeat then addUTCTime (diffUTCTime old_snooze (subRepeat dead repeat)) dead else dead in
+          updateTodo ctxt (todo { tDeadlineAt = Just $ addRepeat dead repeat, tSnoozeTill = Just snooze })
         _ -> return ()
 
 markUndone :: Ctxt -> Text -> Int -> IO ()
